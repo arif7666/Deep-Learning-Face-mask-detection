@@ -1,0 +1,142 @@
+Using transfer learning
+
+from google.colab import drive
+drive.mount('/drive')
+
+import numpy as np # linear algebra
+import pandas as pd
+import os
+
+import cv2
+import random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from keras import backend as K
+from keras.models import Model
+from keras.layers import Input, Conv2D, MaxPooling2D,Flatten, Reshape, Bidirectional, LSTM, Dense, Lambda, Activation, BatchNormalization, Dropout
+from keras.optimizers import Adam,SGD
+import glob
+import tensorflow as tf
+import shutil
+
+with_maskImage = os.listdir('/drive/MyDrive/COLABNOTEBOOK/ODL/Data/data/with_mask')
+without_maskImage = os.listdir('/drive/MyDrive/COLABNOTEBOOK/ODL/Data/data/without_mask')
+
+os.mkdir('./train')
+os.mkdir('./train/with_mask')
+os.mkdir('./val')
+os.mkdir('./val/with_mask')
+os.mkdir('./test')
+os.mkdir('./test/with_mask')
+
+
+os.mkdir('./train/without_mask')
+os.mkdir('./val/without_mask')
+os.mkdir('./test/without_mask')
+
+with_mask_train_len = int(np.round(0.6 * len(with_maskImage), 0))
+with_mask_val_len = int(np.round(0.7 * len(with_maskImage), 0))
+
+for i in range(with_mask_train_len):
+    shutil.copy(os.path.join('/drive/MyDrive/COLABNOTEBOOK/ODL/Data/data/with_mask', with_maskImage[i]), './train/with_mask')
+
+for i in range(with_mask_train_len, with_mask_val_len):
+    shutil.copy(os.path.join('/drive/MyDrive/COLABNOTEBOOK/ODL/Data/data/with_mask', with_maskImage[i]), './val/with_mask')
+
+for i in range(with_mask_val_len, len(with_maskImage)):
+    shutil.copy(os.path.join('/drive/MyDrive/COLABNOTEBOOK/ODL/Data/data/with_mask', with_maskImage[i]), './test/with_mask')
+
+without_mask_train_len = int(np.round(0.6 * len(without_maskImage), 0))
+without_mask_val_len = int(np.round(0.7 * len(without_maskImage), 0))
+
+
+
+for i in range(without_mask_train_len):
+    shutil.copy(os.path.join('/drive/MyDrive/COLABNOTEBOOK/ODL/Data/data/without_mask', without_maskImage[i]), './train/without_mask')
+
+for i in range(without_mask_train_len, without_mask_val_len):
+    shutil.copy(os.path.join('/drive/MyDrive/COLABNOTEBOOK/ODL/Data/data/without_mask', without_maskImage[i]), './val/without_mask')
+
+for i in range(without_mask_val_len, len(without_maskImage)):
+    shutil.copy(os.path.join('/drive/MyDrive/COLABNOTEBOOK/ODL/Data/data/without_mask', without_maskImage[i]), './test/without_mask')
+
+PATH_TRAIN_MASK = './train/with_mask'
+PATH_VAL_MASK = './val/with_mask'
+PATH_TEST_MASK = './test/with_mask'
+
+PATH_TRAIN_NO_MASK = './train/without_mask'
+PATH_VAL_NO_MASK = './val/without_mask'
+PATH_TEST_NO_MASK = './test/without_mask'
+
+PATH_TRAIN = './train'
+PATH_VAL = './val'
+PATH_TEST = './test'
+
+train_mask_files = os.listdir(PATH_TRAIN_MASK)
+train_no_mask_files = os.listdir(PATH_TRAIN_NO_MASK)
+
+from tensorflow.keras.preprocessing.image import ImageDataGenerator,img_to_array,load_img
+
+train_data_gen = ImageDataGenerator(rotation_range=30,
+                                    width_shift_range=0.02,
+                                    height_shift_range=0.02,
+                                    zoom_range=[0.8,1.2],
+                                    horizontal_flip=True,
+                                    rescale=1/255
+                                   )
+
+
+val_data_gen = ImageDataGenerator(rescale=1/255)
+test_data_gen = ImageDataGenerator(rescale=1/255)
+
+training_data = train_data_gen.flow_from_directory(PATH_TRAIN, target_size=(200, 200), color_mode='rgb', class_mode='binary', batch_size=32)
+val_data = val_data_gen.flow_from_directory(PATH_VAL, target_size=(200, 200), color_mode='rgb', class_mode='binary', batch_size=32)
+test_data = test_data_gen.flow_from_directory(PATH_TEST, target_size=(200, 200), color_mode='rgb', class_mode='binary', batch_size=32)
+
+training_data.class_indices
+
+from keras.applications.resnet50 import ResNet50
+
+md=ResNet50(include_top=False,input_shape=(200, 200, 3))
+
+md.summary()
+
+inputl=Input(shape=(200, 200, 3), name='input')
+l1=md(inputl)
+l2=Flatten()(l1)
+l4=Dropout(0.3)
+l3=Dense(10,activation='relu')(l2)
+l4=Dropout(0.3)
+output=Dense(1,activation='sigmoid')(l3)
+
+model=Model(inputs=[inputl],outputs=output)
+
+from tensorflow.keras.callbacks import EarlyStopping
+early_stop = EarlyStopping(monitor='val_loss', patience=4, mode='min')
+
+model.summary()
+
+from keras import backend as K
+
+def recall_m(y_true, y_pred):
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
+    recall = true_positives / (possible_positives + K.epsilon())
+    return recall
+
+def precision_m(y_true, y_pred):
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
+    precision = true_positives / (predicted_positives + K.epsilon())
+    return precision
+
+def f1_m(y_true, y_pred):
+    precision = precision_m(y_true, y_pred)
+    recall = recall_m(y_true, y_pred)
+    return 2*((precision*recall)/(precision+recall+K.epsilon()))
+
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['acc',f1_m,precision_m, recall_m])
+
+history = model.fit(training_data, batch_size=32, epochs=10, validation_data=val_data,callbacks=early_stop)
